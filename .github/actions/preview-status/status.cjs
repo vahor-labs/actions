@@ -46,7 +46,7 @@ async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
     if (!valid) core.info('Skipping closed or superseded PR; leaving status untouched.');
     return valid;
   }
-  async function comment(state, ready = false) {
+  async function comment(state) {
     // Paginate so old sticky comments are still found on busy PRs. Only ever
     // edit our bot's marker, never a user-authored copy of it.
     const comments = await github.paginate(github.rest.issues.listComments, args);
@@ -54,11 +54,10 @@ async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
       && item.user.login === 'github-actions[bot]' && item.body?.includes(MARKER));
     if (!await current()) return false;
     const updated = new Date(now()).toISOString();
-    const project = ready ? `[${context.repo.repo}](${url})` : context.repo.repo;
     const body = `${MARKER}\n`
-      + '| Project | Deployment | Actions | Updated |\n'
-      + '| :--- | :--- | :--- | :--- |\n'
-      + `| ${project} | ${state} | [Logs](${runUrl}) · [\`${sha.slice(0, 7)}\`](${repoUrl}/commit/${sha}) | <relative-time datetime="${updated}">${updated}</relative-time> |`;
+      + '| Deployment | Actions | Updated |\n'
+      + '| :--- | :--- | :--- |\n'
+      + `| ${state} | [Logs](${runUrl}) · [\`${sha.slice(0, 7)}\`](${repoUrl}/commit/${sha}) | <relative-time datetime="${updated}">${updated}</relative-time> |`;
     if (existing) {
       await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
     } else {
@@ -84,7 +83,7 @@ async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
       endpoint.searchParams.set('probe', now());
       core.info(`Attempt ${++attempt} (${Math.round((now() - started) / 1000)}s elapsed): ${endpoint}`);
       if (await deployed(endpoint, sha, fetcher, Math.min(10000, Math.max(1, deadline - now())), core)) {
-        if (await comment('✅ Ready', true)) {
+        if (await comment(`✅ [Ready](${url})`)) {
           core.info(`Verified current commit ${sha} after ${Math.round((now() - started) / 1000)}s.`);
         }
         return;
