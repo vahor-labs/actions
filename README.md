@@ -18,15 +18,25 @@ Two separate reusable workflows replace `build-app-image.yml`:
 Builds run on GitHub-hosted runners and publish Linux AMD64 images to the
 caller's lowercase `ghcr.io/<owner>/<repository>` package:
 
-- Main: `sha-<full commit SHA>`.
+- Main: `sha-<full commit SHA>`, plus the `main` promotion tag for the current
+  branch head only.
 - Same-repository PR: `pr-<number>-<head SHA>`. A successful build adds
   `preview-ready` only while that PR is open at the built head.
 - Fork PR: build only, without registry login, publication, comments or labeling.
 
 Both workflows explicitly check out the actual commit (PR head, not GitHub's
 synthetic merge commit), disable checkout credential persistence, and pass the
-same full SHA as Docker build argument `APP_BUILD_SHA`. No mutable image tags
-are published.
+same full SHA as Docker build argument `APP_BUILD_SHA`.
+
+Main runs are serialized per repository. After a successful SHA-image push,
+the workflow checks GitHub's current `main` head before promoting the exact
+build digest to `main`. Old reruns and builds overtaken by another commit may
+publish their SHA image, but cannot promote it. The `main` tag represents the
+last successfully promoted main build, not a promise that every newer commit
+has already finished building. Consumers should track it by digest and commit
+immutable `main@sha256:...` pins, not deploy the mutable tag directly. This avoids
+choosing commits by image build timestamps or lexical SHA order. PR workflows
+never publish or move `main`.
 
 **Update preview comment** posts Building before the image build starts; it
 does not build anything. **Wait for preview** labels and verifies the deployment
