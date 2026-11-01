@@ -46,6 +46,8 @@ It only edits comments by
 `<!-- vahor-preview-status -->`. All comment pages are searched; human copies
 of the marker are ignored. Subsequent runs update that same bot comment: a compact
 **Project | Deployment | Actions | Updated** table with logs and a commit link.
+The Project column links to the preview URL only after verification, never to
+the source repository; before verification it shows the project name without a link.
 
 1. **Building** replaces the previous state and removes any old preview link.
 2. After publication, add `preview-ready` for ApplicationSet discovery, then
