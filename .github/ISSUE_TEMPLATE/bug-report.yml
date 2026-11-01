@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a reproducible workflow or action problem.
+body:
+  - type: markdown
+    attributes:
+      value: "Reports are public. Do not include credentials, private configurations, private URLs, or unsanitized logs. Use placeholders and a minimal public example."
+  - type: input
+    id: component
+    attributes:
+      label: Workflow or action and revision
+      description: Which workflow or action is affected, and which ref or commit did you use?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide a minimal caller configuration, event type, and steps to reproduce with placeholder values.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Describe the failure and its effect.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Relevant environment (optional)
+      description: Runner OS, tool versions, and whether the event came from a fork, if relevant. No private host details.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs (optional)
+      description: Remove credentials, private configurations, and private URLs before sharing.
+      render: text

@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an improvement to a workflow or action.
+body:
+  - type: markdown
+    attributes:
+      value: "Reports are public. Do not include credentials, private configurations, private URLs, or unsanitized logs."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: Which workflow or action is involved, and what are you trying to achieve?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Current and desired behavior
+      description: What happens today, and what result would solve the problem?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested approach or alternatives (optional)
+      description: Include compatibility or permission implications if relevant.
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant environment or sanitized examples (optional)
+      description: Use placeholders; remove credentials, private configurations, and private URLs.

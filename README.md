@@ -1,7 +1,45 @@
-# Shared GitHub Actions
+# actions
 
-Public reusable workflows for `vahor-labs` applications. Infrastructure
-deployment configuration and credentials remain in `ansible-configs`.
+Reusable GitHub workflows for container builds and verified pull-request previews.
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+[Quick start](#quick-start) · [Workflows](#workflows) · [Preview contract](#preview-readiness-and-comment-contract) · [Contributing](CONTRIBUTING.md)
+
+- **Immutable images** tagged with the full commit SHA.
+- **Verified previews** linked only after the deployed SHA matches the PR head.
+- **Scoped permissions** using the built-in `GITHUB_TOKEN`, without deployment credentials.
+
+## Quick start
+
+Add `.github/workflows/container-main.yml` to an application with a root Dockerfile:
+
+```yaml
+name: Build main container
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+    uses: vahor-labs/actions/.github/workflows/main-build.yml@main
+```
+
+This publishes to `ghcr.io/<owner>/<repository>`. For production deployments,
+consume an immutable digest rather than the mutable `main` tag.
+
+## Workflows
+
+| Workflow | Caller event | Purpose |
+| --- | --- | --- |
+| [main-build.yml](.github/workflows/main-build.yml) | Push to `main` or manual dispatch | Publish a SHA image; promote the current branch head to `main` |
+| [pr-build.yml](.github/workflows/pr-build.yml) | PR opened, synchronized or reopened | Build the PR head and verify its preview |
+| [image-cleanup.yml](.github/workflows/image-cleanup.yml) | PR closed, schedule or manual dispatch | Remove eligible PR images or old untagged versions |
 
 ## Container builds
 
@@ -28,6 +66,9 @@ Both workflows explicitly check out the actual commit (PR head, not GitHub's
 synthetic merge commit), disable checkout credential persistence, and pass the
 same full SHA as Docker build argument `APP_BUILD_SHA`.
 
+<details>
+<summary>Promotion safety and permission boundaries</summary>
+
 Main runs are serialized per repository. After a successful SHA-image push,
 the workflow checks GitHub's current `main` head before promoting the exact
 build digest to `main`. Old reruns and builds overtaken by another commit may
@@ -46,7 +87,16 @@ secrets are required. Only the built-in `GITHUB_TOKEN` is used; no PAT, SSH,
 production secrets or Argo credentials. Privileged status jobs use the shared
 action from this repository's trusted `main`, never code checked out from a PR.
 
+</details>
+
 ## Preview readiness and comment contract
+
+> [!IMPORTANT]
+> A successful image build is not a ready deployment. The preview endpoint must
+> return the exact full PR head SHA before a preview link is posted.
+
+<details>
+<summary>Readiness protocol, status comments and stale-run protection</summary>
 
 The small composite action `.github/actions/preview-status` accepts `phase`
 (`building`, `deploying`, or `failed`) and the caller's HTTPS `preview-url`.
@@ -89,6 +139,8 @@ final status (a newer run owns the comment; manual cancellation can leave the
 last Building/Deploying state). A deployment may of course change after a probe;
 Ready records successful verification for the full SHA linked from the comment.
 
+</details>
+
 ## Image cleanup
 
 `vahor-labs/actions/.github/workflows/image-cleanup.yml@main` owns GHCR cleanup.
@@ -121,6 +173,9 @@ do not delete real package versions just to validate selection logic.
 
 ## Delivery order
 
+<details>
+<summary>Coordinating workflow and application changes</summary>
+
 1. Deliver the website Dockerfile/runtime SHA endpoint contract and enable the
    preview infrastructure (public HTTPS route, ApplicationSet discovery via
    `preview-ready`, exact `pr-<number>-<head SHA>` tags) in their owning repos.
@@ -134,3 +189,14 @@ do not delete real package versions just to validate selection logic.
 Coordinate changes to required inputs with all callers of `@main`. Local checks do
 not prove GHCR access, real ApplicationSet rollout, TLS issuance or a live
 GitHub comment update; those need the authorized post-delivery smoke test.
+
+</details>
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, validation and pull requests.
+Use the [issue forms](https://github.com/vahor-labs/actions/issues/new/choose) for bugs and feature requests.
+
+## License
+
+[MIT](LICENSE).
