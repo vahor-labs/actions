@@ -4,7 +4,11 @@ on:
   workflow_call:
     inputs:
       preview-url:
-        description: Public preview URL for this PR (serves deployment.json)
+        description: Stable HTTPS preview URL for this PR, used in the comment
+        required: true
+        type: string
+      preview-check-url:
+        description: HTTPS commit route template containing {sha}, replaced with the first 12 head SHA characters
         required: true
         type: string
 
@@ -27,6 +31,7 @@ jobs:
         with:
           phase: building
           preview-url: ${{ inputs.preview-url }}
+          preview-check-url: ${{ inputs.preview-check-url }}
 
   build:
     needs: building
@@ -66,7 +71,6 @@ jobs:
           platforms: linux/amd64
           push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.image.outputs.name }}
-          build-args: APP_BUILD_SHA=${{ github.event.pull_request.head.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -83,3 +87,4 @@ jobs:
         with:
           phase: ${{ needs.build.result == 'success' && 'deploying' || 'failed' }}
           preview-url: ${{ inputs.preview-url }}
+          preview-check-url: ${{ inputs.preview-check-url }}

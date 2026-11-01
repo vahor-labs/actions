@@ -47,22 +47,37 @@ Deploy by immutable digest, not the mutable `main` tag.
 
 ### Pull-request previews
 
-Use `pull_request`, never `pull_request_target`. Set `preview-url`:
+Use `pull_request`, never `pull_request_target`. Both HTTPS inputs are required:
 
 ```yaml
 with:
-  preview-url: https://my-app-${{ github.event.pull_request.number }}.preview.example.com
+  preview-url: https://my-app-pr-${{ github.event.pull_request.number }}.preview.example.com
+  preview-check-url: https://my-app-sha-{sha}.preview.example.com
 ```
+
+`preview-url` is the stable PR link shown in the comment. `preview-check-url`
+is a commit-specific URL template: the action replaces every literal `{sha}`
+with the first 12 characters of the PR head SHA in JavaScript (GitHub
+expressions cannot slice strings). It probes that URL itself, not an appended
+endpoint, and never uses it as the Ready link.
 
 Your deployment system must:
 
 1. Watch for `preview-ready` and deploy the exact PR image.
-2. Bake the `APP_BUILD_SHA` build argument into the runtime image.
-3. Serve this at `GET /deployment.json` with `Cache-Control: no-store`:
+2. Route the stable PR hostname to the current preview.
+3. Restrict the commit-specific route to pods selected by the **full head SHA**,
+   not merely the 12-character hostname prefix or a shared PR selector. A missing
+   or stale commit must not fall back to another revision, redirect to the stable
+   route, or return an HTTP 200 default backend.
+4. Retain only the current commit route for each PR; remove the old route when
+   the PR head changes, and remove both routes when the PR closes.
 
-```json
-{"sha":"<exact full PR head SHA>"}
-```
+Readiness means HTTP 200 from that isolated commit route, not an application
+response containing a SHA. No application code, `deployment.json`, or PR
+`APP_BUILD_SHA` build argument is required. Full-SHA verification depends on the
+infrastructure routing contract above; the action cannot inspect pod selectors.
+The main-image workflow still passes `APP_BUILD_SHA` for the existing production
+endpoint.
 
 ## Preview comments
 
@@ -72,10 +87,13 @@ Example (placeholder links, commit and timestamp):
 
 | Deployment | Actions | Updated |
 | :--- | :--- | :--- |
-| ✅ [Ready](https://my-app-42.preview.example.com) | [Logs](https://github.com/example/my-app/actions/runs/123456789) · [`a1b2c3d`](https://github.com/example/my-app/commit/a1b2c3d4e5f67890123456789012345678901234) | 2026-11-01T12:00:00.000Z |
+| ✅ [Ready](https://my-app-pr-42.preview.example.com) | [Logs](https://github.com/example/my-app/actions/runs/123456789) · [`a1b2c3d`](https://github.com/example/my-app/commit/a1b2c3d4e5f67890123456789012345678901234) | 2026-11-01T12:00:00.000Z |
 
-- **Ready:** HTTPS returns HTTP 200 with the exact full SHA.
-- **Waiting:** checks every 15 seconds, for up to 15 minutes.
+- **Ready:** the HTTPS commit-specific URL returns HTTP 200 and the PR head is
+  still current. The comment links to the stable PR URL.
+- **Waiting:** checks every 15 seconds, for up to 15 minutes, with no-cache
+  requests and a maximum 10-second timeout per probe. Redirects are errors;
+  non-200 responses, network failures and timeouts are retried within the deadline.
 - **Failed or timed out:** no preview link. Rerun to check again.
 
 ## Image cleanup

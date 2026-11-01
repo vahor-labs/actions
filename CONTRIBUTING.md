@@ -14,6 +14,7 @@ Run from the repository root:
 ```sh
 actionlint .github/workflows/*.yml
 node --check .github/actions/preview-status/status.cjs
+node --test .github/actions/preview-status/status.test.cjs
 uvx --from check-jsonschema check-jsonschema --builtin-schema vendor.github-actions .github/actions/preview-status/action.yml
 ```
 

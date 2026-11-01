@@ -1,8 +1,8 @@
 const MARKER = '<!-- vahor-preview-status -->';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// A successful HTTP response alone is not proof of deployment. The full SHA is.
-async function deployed(url, sha, fetcher, timeoutMs, core) {
+// Infrastructure must route this commit-specific URL only to full-SHA pods.
+async function deployed(url, fetcher, timeoutMs, core) {
   try {
     const response = await fetcher(url, {
       cache: 'no-store',
@@ -14,17 +14,16 @@ async function deployed(url, sha, fetcher, timeoutMs, core) {
       core.info(`HTTP ${response.status}; preview is not ready.`);
       return false;
     }
-    const actual = (await response.json()).sha;
-    core.info(`HTTP 200; deployed SHA: ${JSON.stringify(actual) ?? 'missing'}; expected: ${sha}`);
-    return actual === sha;
+    core.info('HTTP 200 from the commit-specific preview route.');
+    return true;
   } catch (error) {
-    // DNS, TLS/certificate provisioning, 404s and malformed JSON are retryable.
+    // DNS, TLS/certificate provisioning, redirects and timeouts are retryable.
     core.info(`Probe failed (${error.cause?.code || error.name}); retrying.`);
     return false;
   }
 }
 
-async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
+async function run({ github, context, core, phase, previewUrl, previewCheckUrl, fetcher = fetch,
   wait = sleep, now = Date.now, timeoutMs = 900000, intervalMs = 15000 }) {
   if (!['building', 'deploying', 'failed'].includes(phase)) {
     throw new Error(`Unknown preview phase: ${phase}`);
@@ -38,6 +37,11 @@ async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
   const args = { ...context.repo, issue_number: pull.number };
   const url = new URL(previewUrl);
   if (url.protocol !== 'https:') throw new Error('preview-url must use HTTPS.');
+  if (!previewCheckUrl?.includes('{sha}')) {
+    throw new Error('preview-check-url must contain {sha}.');
+  }
+  const endpoint = new URL(previewCheckUrl.replaceAll('{sha}', sha.slice(0, 12)));
+  if (endpoint.protocol !== 'https:') throw new Error('preview-check-url must use HTTPS.');
   const repoUrl = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}`;
   const runUrl = `${repoUrl}/actions/runs/${context.runId}`;
   async function current() {
@@ -74,24 +78,20 @@ async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
     const started = now();
     const deadline = started + timeoutMs;
     let attempt = 0;
-    core.info(`Waiting for ${url} to serve commit ${sha}. Polling every ${intervalMs / 1000}s for up to ${timeoutMs / 60000} minutes.`);
+    core.info(`Waiting for commit route ${endpoint} for ${sha}. Polling every ${intervalMs / 1000}s for up to ${timeoutMs / 60000} minutes.`);
     while (now() < deadline) {
       if (!await current()) return;
-      // Bypass intermediary caches as well as the browser-style fetch cache.
-      const endpoint = new URL('deployment.json', `${url.href.replace(/\/$/, '')}/`);
-      endpoint.searchParams.set('sha', sha);
-      endpoint.searchParams.set('probe', now());
       core.info(`Attempt ${++attempt} (${Math.round((now() - started) / 1000)}s elapsed): ${endpoint}`);
-      if (await deployed(endpoint, sha, fetcher, Math.min(10000, Math.max(1, deadline - now())), core)) {
+      if (await deployed(endpoint, fetcher, Math.min(10000, Math.max(1, deadline - now())), core)) {
         if (await comment(`✅ [Ready](${url})`)) {
-          core.info(`Verified current commit ${sha} after ${Math.round((now() - started) / 1000)}s.`);
+          core.info(`Verified HTTP 200 on commit route ${endpoint} for current commit ${sha} after ${Math.round((now() - started) / 1000)}s; full-SHA isolation is enforced by infrastructure.`);
         }
         return;
       }
       await wait(Math.min(intervalMs, Math.max(0, deadline - now())));
     }
     if (await comment('❌ Deployment timed out')) {
-      core.setFailed('Preview readiness timed out: deployment.json did not return the expected full head SHA.');
+      core.setFailed('Preview readiness timed out: commit-specific preview URL did not return HTTP 200.');
     }
   } catch (error) {
     // Do not include arbitrary remote error text in the public comment.

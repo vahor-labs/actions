@@ -1,11 +1,14 @@
 name: PR preview status
-description: Maintain one bot comment and verify the public deployment SHA
+description: Maintain one bot comment and check the commit-specific preview route
 inputs:
   phase:
     description: building, deploying (label and poll), or failed
     required: true
   preview-url:
-    description: Public preview URL for this PR (serves deployment.json)
+    description: Stable public preview URL for this PR, used in the comment
+    required: true
+  preview-check-url:
+    description: HTTPS commit route template containing {sha}, replaced with the first 12 head SHA characters
     required: true
 runs:
   using: composite
@@ -15,7 +18,8 @@ runs:
         PREVIEW_ACTION_PATH: ${{ github.action_path }}
         PREVIEW_PHASE: ${{ inputs.phase }}
         PREVIEW_URL: ${{ inputs.preview-url }}
+        PREVIEW_CHECK_URL: ${{ inputs.preview-check-url }}
       with:
         script: |
           const { run } = require(`${process.env.PREVIEW_ACTION_PATH}/status.cjs`);
-          await run({ github, context, core, phase: process.env.PREVIEW_PHASE, previewUrl: process.env.PREVIEW_URL });
+          await run({ github, context, core, phase: process.env.PREVIEW_PHASE, previewUrl: process.env.PREVIEW_URL, previewCheckUrl: process.env.PREVIEW_CHECK_URL });
