@@ -30,8 +30,7 @@ jobs:
           preview-prefix: ${{ inputs.preview-prefix }}
 
   build:
-    needs: building
-    if: always() && !cancelled() && github.event_name == 'pull_request' && (needs.building.result == 'success' || needs.building.result == 'skipped')
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

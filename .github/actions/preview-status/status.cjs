@@ -24,7 +24,7 @@ async function deployed(url, fetcher, timeoutMs, core) {
 }
 
 async function run({ github, context, core, phase, previewPrefix = '', fetcher = fetch,
-  wait = sleep, now = Date.now, timeoutMs = 900000, intervalMs = 15000 }) {
+  wait = sleep, now = Date.now, timeoutMs = 900000, intervalMs = 5000 }) {
   if (!['building', 'deploying', 'failed'].includes(phase)) {
     throw new Error(`Unknown preview phase: ${phase}`);
   }

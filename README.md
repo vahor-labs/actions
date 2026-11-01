@@ -82,7 +82,9 @@ endpoint.
 
 ## Preview comments
 
-One bot comment tracks **Building** → **Deploying** → **Ready**.
+One bot comment tracks **Building** → **Deploying** → **Ready**. The Building
+comment and image build run in parallel with separate job permissions;
+verification waits for both jobs before updating the comment.
 
 Example (placeholder links, commit and timestamp):
 
@@ -95,7 +97,7 @@ Example (placeholder links, commit and timestamp):
 - **Building / Deploying:** retain the stable PR link if already present in the
   bot comment. The commit link is shown only after readiness succeeds. The stable
   alias may be briefly unavailable while the single preview pod is replaced.
-- **Waiting:** checks every 15 seconds, for up to 15 minutes, with no-cache
+- **Waiting:** checks every 5 seconds, for up to 15 minutes, with no-cache
   requests and a maximum 10-second timeout per probe. Redirects are errors;
   non-200 responses, network failures and timeouts are retried within the deadline.
 - **Failed or timed out:** no preview link. Rerun to check again.
