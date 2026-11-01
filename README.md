@@ -47,19 +47,20 @@ Deploy by immutable digest, not the mutable `main` tag.
 
 ### Pull-request previews
 
-Use `pull_request`, never `pull_request_target`. Both HTTPS inputs are required:
+Use `pull_request`, never `pull_request_target`. Preview URLs are generated under
+`preview.vahor.fr` from the repository name: lowercase, non-alphanumeric runs
+replaced with `-`, trimmed and limited to 46 characters. `vahor.fr` becomes
+`vahor-fr`, so its caller needs no inputs. Override only when necessary:
 
 ```yaml
 with:
-  preview-url: https://my-app-pr-${{ github.event.pull_request.number }}.preview.example.com
-  preview-check-url: https://my-app-sha-{sha}.preview.example.com
+  preview-prefix: my-app
 ```
 
-`preview-url` is the stable PR link shown in the comment. `preview-check-url`
-is a commit-specific URL template: the action replaces every literal `{sha}`
-with the first 12 characters of the PR head SHA in JavaScript (GitHub
-expressions cannot slice strings). It probes that URL itself, not an appended
-endpoint, and never uses it as the Ready link.
+The prefix must be a lowercase DNS label, at most 46 characters. The generated
+URLs are `https://<prefix>-pr-<number>.preview.vahor.fr/` and
+`https://<prefix>-sha-<first 12 head SHA characters>.preview.vahor.fr/`.
+The action probes the commit URL itself, not an appended endpoint.
 
 Your deployment system must:
 
@@ -87,10 +88,13 @@ Example (placeholder links, commit and timestamp):
 
 | Deployment | Actions | Updated |
 | :--- | :--- | :--- |
-| ✅ [Ready](https://my-app-pr-42.preview.example.com) | [Logs](https://github.com/example/my-app/actions/runs/123456789) · [`a1b2c3d`](https://github.com/example/my-app/commit/a1b2c3d4e5f67890123456789012345678901234) | 2026-11-01T12:00:00.000Z |
+| ✅ Ready · [PR preview](https://my-app-pr-42.preview.vahor.fr/) · [Commit preview](https://my-app-sha-a1b2c3d4e5f6.preview.vahor.fr/) | [Logs](https://github.com/example/my-app/actions/runs/123456789) · [`a1b2c3d`](https://github.com/example/my-app/commit/a1b2c3d4e5f67890123456789012345678901234) | 2026-11-01T12:00:00.000Z |
 
 - **Ready:** the HTTPS commit-specific URL returns HTTP 200 and the PR head is
-  still current. The comment links to the stable PR URL.
+  still current. The comment shows both PR and commit preview links.
+- **Building / Deploying:** retain the stable PR link if already present in the
+  bot comment. The commit link is shown only after readiness succeeds. The stable
+  alias may be briefly unavailable while the single preview pod is replaced.
 - **Waiting:** checks every 15 seconds, for up to 15 minutes, with no-cache
   requests and a maximum 10-second timeout per probe. Redirects are errors;
   non-200 responses, network failures and timeouts are retried within the deadline.

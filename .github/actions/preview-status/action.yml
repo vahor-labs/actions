@@ -4,12 +4,10 @@ inputs:
   phase:
     description: building, deploying (label and poll), or failed
     required: true
-  preview-url:
-    description: Stable public preview URL for this PR, used in the comment
-    required: true
-  preview-check-url:
-    description: HTTPS commit route template containing {sha}, replaced with the first 12 head SHA characters
-    required: true
+  preview-prefix:
+    description: Preview DNS prefix; defaults to the normalized repository name (vahor.fr becomes vahor-fr)
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -17,9 +15,8 @@ runs:
       env:
         PREVIEW_ACTION_PATH: ${{ github.action_path }}
         PREVIEW_PHASE: ${{ inputs.phase }}
-        PREVIEW_URL: ${{ inputs.preview-url }}
-        PREVIEW_CHECK_URL: ${{ inputs.preview-check-url }}
+        PREVIEW_PREFIX: ${{ inputs.preview-prefix }}
       with:
         script: |
           const { run } = require(`${process.env.PREVIEW_ACTION_PATH}/status.cjs`);
-          await run({ github, context, core, phase: process.env.PREVIEW_PHASE, previewUrl: process.env.PREVIEW_URL, previewCheckUrl: process.env.PREVIEW_CHECK_URL });
+          await run({ github, context, core, phase: process.env.PREVIEW_PHASE, previewPrefix: process.env.PREVIEW_PREFIX });

@@ -23,7 +23,7 @@ async function deployed(url, fetcher, timeoutMs, core) {
   }
 }
 
-async function run({ github, context, core, phase, previewUrl, previewCheckUrl, fetcher = fetch,
+async function run({ github, context, core, phase, previewPrefix = '', fetcher = fetch,
   wait = sleep, now = Date.now, timeoutMs = 900000, intervalMs = 15000 }) {
   if (!['building', 'deploying', 'failed'].includes(phase)) {
     throw new Error(`Unknown preview phase: ${phase}`);
@@ -35,13 +35,13 @@ async function run({ github, context, core, phase, previewUrl, previewCheckUrl, 
   }
   const sha = pull.head.sha;
   const args = { ...context.repo, issue_number: pull.number };
-  const url = new URL(previewUrl);
-  if (url.protocol !== 'https:') throw new Error('preview-url must use HTTPS.');
-  if (!previewCheckUrl?.includes('{sha}')) {
-    throw new Error('preview-check-url must contain {sha}.');
+  const prefix = previewPrefix || context.repo.repo.toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 46).replace(/-+$/g, '');
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?$/.test(prefix)) {
+    throw new Error('preview-prefix must be a lowercase DNS label of at most 46 characters.');
   }
-  const endpoint = new URL(previewCheckUrl.replaceAll('{sha}', sha.slice(0, 12)));
-  if (endpoint.protocol !== 'https:') throw new Error('preview-check-url must use HTTPS.');
+  const url = new URL(`https://${prefix}-pr-${pull.number}.preview.vahor.fr/`);
+  const endpoint = new URL(`https://${prefix}-sha-${sha.slice(0, 12)}.preview.vahor.fr/`);
   const repoUrl = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}`;
   const runUrl = `${repoUrl}/actions/runs/${context.runId}`;
   async function current() {
@@ -50,18 +50,23 @@ async function run({ github, context, core, phase, previewUrl, previewCheckUrl, 
     if (!valid) core.info('Skipping closed or superseded PR; leaving status untouched.');
     return valid;
   }
-  async function comment(state) {
+  async function comment(state, ready = false) {
     // Paginate so old sticky comments are still found on busy PRs. Only ever
     // edit our bot's marker, never a user-authored copy of it.
     const comments = await github.paginate(github.rest.issues.listComments, args);
     const existing = comments.find((item) => item.user?.type === 'Bot'
       && item.user.login === 'github-actions[bot]' && item.body?.includes(MARKER));
     if (!await current()) return false;
+    const keepPrLink = ['⏳ Building', '⏳ Deploying'].includes(state)
+      && existing?.body.includes(`](${url})`);
+    const links = ready
+      ? ` · [PR preview](${url}) · [Commit preview](${endpoint})`
+      : keepPrLink ? ` · [PR preview](${url})` : '';
     const updated = new Date(now()).toISOString();
     const body = `${MARKER}\n`
       + '| Deployment | Actions | Updated |\n'
       + '| :--- | :--- | :--- |\n'
-      + `| ${state} | [Logs](${runUrl}) · [\`${sha.slice(0, 7)}\`](${repoUrl}/commit/${sha}) | <relative-time datetime="${updated}">${updated}</relative-time> |`;
+      + `| ${state}${links} | [Logs](${runUrl}) · [\`${sha.slice(0, 7)}\`](${repoUrl}/commit/${sha}) | <relative-time datetime="${updated}">${updated}</relative-time> |`;
     if (existing) {
       await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
     } else {
@@ -83,7 +88,7 @@ async function run({ github, context, core, phase, previewUrl, previewCheckUrl, 
       if (!await current()) return;
       core.info(`Attempt ${++attempt} (${Math.round((now() - started) / 1000)}s elapsed): ${endpoint}`);
       if (await deployed(endpoint, fetcher, Math.min(10000, Math.max(1, deadline - now())), core)) {
-        if (await comment(`✅ [Ready](${url})`)) {
+        if (await comment('✅ Ready', true)) {
           core.info(`Verified HTTP 200 on commit route ${endpoint} for current commit ${sha} after ${Math.round((now() - started) / 1000)}s; full-SHA isolation is enforced by infrastructure.`);
         }
         return;

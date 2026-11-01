@@ -3,13 +3,10 @@ name: Build PR container and await preview
 on:
   workflow_call:
     inputs:
-      preview-url:
-        description: Stable HTTPS preview URL for this PR, used in the comment
-        required: true
-        type: string
-      preview-check-url:
-        description: HTTPS commit route template containing {sha}, replaced with the first 12 head SHA characters
-        required: true
+      preview-prefix:
+        description: Preview DNS prefix; defaults to the normalized repository name
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -30,8 +27,7 @@ jobs:
       - uses: vahor-labs/actions/.github/actions/preview-status@main
         with:
           phase: building
-          preview-url: ${{ inputs.preview-url }}
-          preview-check-url: ${{ inputs.preview-check-url }}
+          preview-prefix: ${{ inputs.preview-prefix }}
 
   build:
     needs: building
@@ -86,5 +82,4 @@ jobs:
       - uses: vahor-labs/actions/.github/actions/preview-status@main
         with:
           phase: ${{ needs.build.result == 'success' && 'deploying' || 'failed' }}
-          preview-url: ${{ inputs.preview-url }}
-          preview-check-url: ${{ inputs.preview-check-url }}
+          preview-prefix: ${{ inputs.preview-prefix }}

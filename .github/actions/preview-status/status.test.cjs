@@ -4,8 +4,8 @@ const { run } = require('./status.cjs');
 
 const SHA = 'a1b2c3d4e5f67890123456789012345678901234';
 const MARKER = '<!-- vahor-preview-status -->';
-const STABLE = 'https://my-app-pr-42.preview.example.com/';
-const TEMPLATE = 'https://my-app-sha-{sha}.preview.example.com/';
+const STABLE = 'https://my-app-pr-42.preview.vahor.fr/';
+const COMMIT = 'https://my-app-sha-a1b2c3d4e5f6.preview.vahor.fr/';
 
 function fixture(overrides = {}) {
   const calls = { comments: [], labels: [], probes: [], logs: [], failures: [], waits: [] };
@@ -36,7 +36,7 @@ function fixture(overrides = {}) {
       info: (message) => calls.logs.push(message),
       setFailed: (message) => calls.failures.push(message),
     },
-    phase: 'deploying', previewUrl: STABLE, previewCheckUrl: TEMPLATE,
+    phase: 'deploying',
     timeoutMs: 100, intervalMs: 15,
     now: () => clock,
     wait: async (ms) => { calls.waits.push(ms); clock += ms; },
@@ -50,20 +50,19 @@ function fixture(overrides = {}) {
   return { options, calls, comments, setLive: (value) => { live = value; } };
 }
 
-test('probes the rendered commit URL itself and links only the stable URL', async () => {
-  const f = fixture({
-    previewCheckUrl: `${TEMPLATE}health/{sha}?revision={sha}`,
-  });
+test('generates both preview URLs and shows both links only after readiness', async () => {
+  const f = fixture();
   await run(f.options);
   assert.equal(f.calls.probes.length, 1);
   const { url, init } = f.calls.probes[0];
-  assert.equal(url, 'https://my-app-sha-a1b2c3d4e5f6.preview.example.com/health/a1b2c3d4e5f6?revision=a1b2c3d4e5f6');
+  assert.equal(url, COMMIT);
   assert.equal(init.cache, 'no-store');
   assert.equal(init.headers['Cache-Control'], 'no-cache');
   assert.equal(init.redirect, 'error');
   assert.ok(init.signal instanceof AbortSignal);
-  assert.match(f.calls.comments.at(-1).body, /✅ \[Ready\]\(https:\/\/my-app-pr-42.preview.example.com\/\)/);
-  assert.ok(!f.calls.comments.at(-1).body.includes('my-app-sha-'));
+  assert.ok(f.calls.comments.at(-1).body.includes(`✅ Ready · [PR preview](${STABLE}) · [Commit preview](${COMMIT})`));
+  assert.ok(!f.calls.comments[0].body.includes('[PR preview]'));
+  assert.ok(!f.calls.comments[0].body.includes('[Commit preview]'));
   assert.deepEqual(f.calls.failures, []);
   assert.ok(f.calls.logs.some((line) => line.includes('Verified HTTP 200 on commit route')
     && line.includes(SHA) && line.includes('infrastructure')));
@@ -85,7 +84,7 @@ test('retries non-200s, DNS/TLS failures, redirects and aborts before success', 
   await run(f.options);
   assert.equal(outcomes.length, 0);
   assert.equal(f.calls.waits.length, 7);
-  assert.match(f.calls.comments.at(-1).body, /✅ \[Ready\]/);
+  assert.match(f.calls.comments.at(-1).body, /✅ Ready/);
   assert.deepEqual(f.calls.failures, []);
 });
 
@@ -130,18 +129,25 @@ test('a stalled fetch is aborted and ends in timeout without a Ready link', asyn
   }
   assert.equal(aborted, true);
   assert.equal(f.calls.failures.length, 1);
-  assert.ok(f.calls.comments.every(({ body }) => !body.includes('[Ready]')));
+  assert.ok(f.calls.comments.every(({ body }) => !body.includes('✅ Ready')));
 });
 
-test('both URLs require HTTPS and the check URL requires its SHA placeholder', async () => {
-  for (const overrides of [
-    { previewUrl: 'http://stable.example.com' },
-    { previewCheckUrl: 'http://sha-{sha}.example.com' },
-    { previewCheckUrl: 'https://stable.example.com' },
-    { previewCheckUrl: undefined },
-  ]) {
-    const f = fixture(overrides);
-    await assert.rejects(run(f.options), /HTTPS|contain \{sha\}/);
+test('normalizes repository names by default and accepts an explicit DNS prefix', async () => {
+  const f = fixture();
+  f.options.context.repo.repo = 'Vahor.fr';
+  f.options.context.payload.pull_request.head.repo.full_name = 'example/Vahor.fr';
+  await run(f.options);
+  assert.equal(f.calls.probes[0].url, 'https://vahor-fr-sha-a1b2c3d4e5f6.preview.vahor.fr/');
+  assert.ok(f.calls.comments.at(-1).body.includes('[PR preview](https://vahor-fr-pr-42.preview.vahor.fr/)'));
+  const custom = fixture({ previewPrefix: 'custom-prefix' });
+  await run(custom.options);
+  assert.equal(custom.calls.probes[0].url, 'https://custom-prefix-sha-a1b2c3d4e5f6.preview.vahor.fr/');
+});
+
+test('rejects invalid or overlong explicit prefixes before side effects', async () => {
+  for (const previewPrefix of ['UPPER', '-leading', 'trailing-', 'a.b', 'x'.repeat(47)]) {
+    const f = fixture({ previewPrefix });
+    await assert.rejects(run(f.options), /preview-prefix/);
     assert.equal(f.calls.comments.length, 0);
     assert.equal(f.calls.labels.length, 0);
     assert.equal(f.calls.probes.length, 0);
@@ -150,13 +156,27 @@ test('both URLs require HTTPS and the check URL requires its SHA placeholder', a
 
 test('forks and non-PR events have no API or network side effects', async () => {
   for (const fork of [true, false]) {
-    const f = fixture({ previewUrl: undefined, previewCheckUrl: undefined });
+    const f = fixture();
     if (fork) f.options.context.payload.pull_request.head.repo.full_name = 'fork/my-app';
     else f.options.context.payload = {};
     f.options.github = new Proxy({}, { get() { assert.fail('unexpected GitHub API access'); } });
     await run(f.options);
     assert.equal(f.calls.probes.length, 0);
     assert.equal(f.calls.failures.length, 0);
+  }
+});
+
+test('keeps an existing PR link during building and deploying but hides the commit link until ready', async () => {
+  for (const phase of ['building', 'deploying']) {
+    const f = fixture({ phase });
+    f.comments.push({
+      id: 3, user: { type: 'Bot', login: 'github-actions[bot]' },
+      body: `${MARKER}\n✅ Ready · [PR preview](${STABLE}) · [Commit preview](https://old-commit.preview.vahor.fr/)`,
+    });
+    await run(f.options);
+    assert.ok(f.calls.comments[0].body.includes(`[PR preview](${STABLE})`));
+    assert.ok(!f.calls.comments[0].body.includes('[Commit preview]'));
+    assert.ok(!f.calls.comments[0].body.includes('old-commit'));
   }
 });
 
