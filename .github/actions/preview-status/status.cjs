@@ -2,7 +2,7 @@ const MARKER = '<!-- vahor-preview-status -->';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A successful HTTP response alone is not proof of deployment. The full SHA is.
-async function deployed(url, sha, fetcher = fetch, timeoutMs = 10000) {
+async function deployed(url, sha, fetcher, timeoutMs, core) {
   try {
     const response = await fetcher(url, {
       cache: 'no-store',
@@ -10,14 +10,21 @@ async function deployed(url, sha, fetcher = fetch, timeoutMs = 10000) {
       redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
     });
-    return response.status === 200 && (await response.json()).sha === sha;
-  } catch {
+    if (response.status !== 200) {
+      core.info(`HTTP ${response.status}; preview is not ready.`);
+      return false;
+    }
+    const actual = (await response.json()).sha;
+    core.info(`HTTP 200; deployed SHA: ${JSON.stringify(actual) ?? 'missing'}; expected: ${sha}`);
+    return actual === sha;
+  } catch (error) {
     // DNS, TLS/certificate provisioning, 404s and malformed JSON are retryable.
+    core.info(`Probe failed (${error.cause?.code || error.name}); retrying.`);
     return false;
   }
 }
 
-async function run({ github, context, core, phase, fetcher = fetch,
+async function run({ github, context, core, phase, previewUrl, fetcher = fetch,
   wait = sleep, now = Date.now, timeoutMs = 900000, intervalMs = 15000 }) {
   if (!['building', 'deploying', 'failed'].includes(phase)) {
     throw new Error(`Unknown preview phase: ${phase}`);
@@ -29,8 +36,10 @@ async function run({ github, context, core, phase, fetcher = fetch,
   }
   const sha = pull.head.sha;
   const args = { ...context.repo, issue_number: pull.number };
-  const url = `https://vahor-fr-${pull.number}.preview.vahor.fr`;
-  const runUrl = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+  const url = new URL(previewUrl);
+  if (url.protocol !== 'https:') throw new Error('preview-url must use HTTPS.');
+  const repoUrl = `${context.serverUrl || 'https://github.com'}/${context.repo.owner}/${context.repo.repo}`;
+  const runUrl = `${repoUrl}/actions/runs/${context.runId}`;
   async function current() {
     const { data } = await github.rest.pulls.get({ ...context.repo, pull_number: pull.number });
     const valid = data.state === 'open' && data.head.sha === sha;
@@ -44,7 +53,11 @@ async function run({ github, context, core, phase, fetcher = fetch,
     const existing = comments.find((item) => item.user?.type === 'Bot'
       && item.user.login === 'github-actions[bot]' && item.body?.includes(MARKER));
     if (!await current()) return false;
-    const body = `${MARKER}\n## Preview deployment\n\n${state}\n\nCommit: \`${sha}\` · [Build logs](${runUrl})`;
+    const updated = new Date(now()).toISOString();
+    const body = `${MARKER}\n`
+      + '| Project | Deployment | Actions | Updated |\n'
+      + '| :--- | :--- | :--- | :--- |\n'
+      + `| [${context.repo.repo}](${repoUrl}) | ${state} | [Logs](${runUrl}) · [\`${sha.slice(0, 7)}\`](${repoUrl}/commit/${sha}) | <relative-time datetime="${updated}">${updated}</relative-time> |`;
     if (existing) {
       await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
     } else {
@@ -52,31 +65,39 @@ async function run({ github, context, core, phase, fetcher = fetch,
     }
     return true;
   }
-  if (phase === 'building') return comment('⏳ **Building**');
-  if (phase === 'failed') return comment('❌ **Build failed** — preview was not verified for this commit. See build logs.');
+  if (phase === 'building') return comment('⏳ Building');
+  if (phase === 'failed') return comment('❌ Build failed');
   try {
     if (!await current()) return;
     await github.rest.issues.addLabels({ ...args, labels: ['preview-ready'] });
-    if (!await comment('⏳ **Deploying / Waiting** — image published; waiting for the public deployment to serve this commit.')) return;
-    const deadline = now() + timeoutMs;
+    if (!await comment('⏳ Deploying')) return;
+    const started = now();
+    const deadline = started + timeoutMs;
+    let attempt = 0;
+    core.info(`Waiting for ${url} to serve commit ${sha}. Polling every ${intervalMs / 1000}s for up to ${timeoutMs / 60000} minutes.`);
     while (now() < deadline) {
       if (!await current()) return;
       // Bypass intermediary caches as well as the browser-style fetch cache.
-      const endpoint = `${url}/deployment.json?sha=${sha}&probe=${now()}`;
-      if (await deployed(endpoint, sha, fetcher, Math.min(10000, Math.max(1, deadline - now())))) {
-        await comment(`✅ **Ready** — [Open preview](${url})`);
+      const endpoint = new URL('deployment.json', `${url.href.replace(/\/$/, '')}/`);
+      endpoint.searchParams.set('sha', sha);
+      endpoint.searchParams.set('probe', now());
+      core.info(`Attempt ${++attempt} (${Math.round((now() - started) / 1000)}s elapsed): ${endpoint}`);
+      if (await deployed(endpoint, sha, fetcher, Math.min(10000, Math.max(1, deadline - now())), core)) {
+        if (await comment(`✅ [Ready](${url})`)) {
+          core.info(`Verified current commit ${sha} after ${Math.round((now() - started) / 1000)}s.`);
+        }
         return;
       }
       await wait(Math.min(intervalMs, Math.max(0, deadline - now())));
     }
-    if (await comment('❌ **Deployment timed out** — the public endpoint did not confirm this commit within 15 minutes. See build logs.')) {
+    if (await comment('❌ Deployment timed out')) {
       core.setFailed('Preview readiness timed out: deployment.json did not return the expected full head SHA.');
     }
   } catch (error) {
     // Do not include arbitrary remote error text in the public comment.
-    await comment('❌ **Deployment failed** — readiness could not be verified. See build logs.');
+    await comment('❌ Deployment failed');
     throw error;
   }
 }
 
-module.exports = { MARKER, deployed, run };
+module.exports = { run };

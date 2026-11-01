@@ -2,6 +2,11 @@ name: Build PR container and await preview
 
 on:
   workflow_call:
+    inputs:
+      preview-url:
+        description: Public preview URL for this PR (serves deployment.json)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,6 +17,7 @@ concurrency:
 
 jobs:
   building:
+    name: Update preview comment
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
@@ -20,6 +26,7 @@ jobs:
       - uses: vahor-labs/actions/.github/actions/preview-status@main
         with:
           phase: building
+          preview-url: ${{ inputs.preview-url }}
 
   build:
     needs: building
@@ -63,7 +70,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  preview:
+  verification:
+    name: Wait for preview
     needs: [building, build]
     if: always() && !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.building.result == 'success'
     runs-on: ubuntu-latest
@@ -74,3 +82,4 @@ jobs:
       - uses: vahor-labs/actions/.github/actions/preview-status@main
         with:
           phase: ${{ needs.build.result == 'success' && 'deploying' || 'failed' }}
+          preview-url: ${{ inputs.preview-url }}

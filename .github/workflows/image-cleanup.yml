@@ -1,0 +1,105 @@
+name: Clean container images
+
+on:
+  workflow_call:
+    inputs:
+      older_than_hours:
+        description: Delete untagged versions older than this many hours
+        required: false
+        default: "24"
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  pr:
+    name: Delete closed PR images
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete PR image versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          PACKAGE: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          PACKAGE="${PACKAGE,,}"
+
+          if [ "$(gh api "repos/${REPOSITORY}" --jq .owner.type)" = "Organization" ]; then
+            owner_path="orgs/${OWNER}"
+          else
+            owner_path="users/${OWNER}"
+          fi
+
+          prefix="pr-${PR_NUMBER}-"
+          ids=$(
+            gh api --paginate --slurp \
+              "${owner_path}/packages/container/${PACKAGE}/versions?per_page=100" |
+              jq -r --arg prefix "$prefix" '
+                .[][]
+                | select((.metadata.container.tags // []) as $tags
+                  | ($tags | length) > 0 and all($tags[]; startswith($prefix)))
+                | .id
+              '
+          )
+
+          for id in $ids; do
+            echo "Deleting ${PACKAGE} version ${id} (${prefix}*)"
+            gh api --method DELETE \
+              "${owner_path}/packages/container/${PACKAGE}/versions/${id}"
+          done
+
+  untagged:
+    name: Delete old untagged images
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete untagged image versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          PACKAGE: ${{ github.event.repository.name }}
+          OLDER_THAN_HOURS: ${{ inputs.older_than_hours }}
+        run: |
+          set -euo pipefail
+          PACKAGE="${PACKAGE,,}"
+
+          case "${OLDER_THAN_HOURS}" in
+            '' | *[!0-9]*)
+              echo "older_than_hours must be a non-negative integer" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ "$(gh api "repos/${REPOSITORY}" --jq .owner.type)" = "Organization" ]; then
+            owner_path="orgs/${OWNER}"
+          else
+            owner_path="users/${OWNER}"
+          fi
+
+          cutoff=$(( $(date -u +%s) - 10#${OLDER_THAN_HOURS} * 3600 ))
+          ids=$(
+            gh api --paginate --slurp \
+              "${owner_path}/packages/container/${PACKAGE}/versions?per_page=100" |
+              jq -r --argjson cutoff "$cutoff" '
+                .[][]
+                | select((.metadata.container.tags // []) | length == 0)
+                | select((.created_at | fromdateiso8601) < $cutoff)
+                | .id
+              '
+          )
+
+          count=$(printf "%s" "$ids" | wc -w | tr -d ' ')
+          echo "Found ${count} untagged versions older than ${OLDER_THAN_HOURS}h"
+
+          for id in $ids; do
+            echo "Deleting untagged ${PACKAGE} version ${id}"
+            gh api --method DELETE \
+              "${owner_path}/packages/container/${PACKAGE}/versions/${id}"
+          done
